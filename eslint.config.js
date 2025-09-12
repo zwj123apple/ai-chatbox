@@ -7,6 +7,11 @@ import { defineConfig, globalIgnores } from "eslint/config";
 export default defineConfig([
   globalIgnores(["dist"]),
   {
+    // env: {
+    //   browser: true, // 浏览器环境（Vite 项目最终运行在浏览器）
+    //   es2021: true, // 支持 ES2021 语法
+    //   node: true, // 关键：声明 Node 环境，让 ESLint 识别 process
+    // },
     files: ["**/*.{js,jsx}"],
     extends: [
       js.configs.recommended,

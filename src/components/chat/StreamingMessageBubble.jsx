@@ -44,19 +44,6 @@ export default function StreamingMessageBubble({
       setTimeout(() => setCopiedId(null), 2000);
     } catch (err) {
       console.error("复制失败:", err);
-      // 备用复制方法
-      const textArea = document.createElement("textarea");
-      textArea.value = text;
-      document.body.appendChild(textArea);
-      textArea.select();
-      try {
-        document.execCommand("copy");
-        setCopiedId(id);
-        setTimeout(() => setCopiedId(null), 2000);
-      } catch (err2) {
-        console.error("备用复制方法也失败:", err2);
-      }
-      document.body.removeChild(textArea);
     }
   };
 
@@ -162,15 +149,17 @@ export default function StreamingMessageBubble({
           )}
 
           {/* 消息长度指示器（调试用） */}
-          {!isUser && displayText && process.env.NODE_ENV === "development" && (
-            <span
-              className={`text-xs ${
-                darkMode ? "text-gray-500" : "text-gray-400"
-              }`}
-            >
-              {displayText.length} 字符
-            </span>
-          )}
+          {!isUser &&
+            displayText &&
+            import.meta.env.NODE_ENV === "development" && (
+              <span
+                className={`text-xs ${
+                  darkMode ? "text-gray-500" : "text-gray-400"
+                }`}
+              >
+                {displayText.length} 字符
+              </span>
+            )}
         </div>
 
         {/* 消息操作按钮区域 */}
