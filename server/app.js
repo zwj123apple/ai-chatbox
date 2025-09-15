@@ -528,6 +528,9 @@ app.use("*", (req, res) => {
       "/api/health",
       "/api/openai/chat",
       "/api/zhipu/chat",
+      "/api/anthropic/chat",
+      "/api/qwen/chat",
+      "/api/gemini/chat",
       "/api/test",
     ],
   });
