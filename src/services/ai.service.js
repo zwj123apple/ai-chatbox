@@ -1,9 +1,7 @@
-// ============= src/services/ai.service.js =============
-import {
-  getCurrentConfig,
-  PROVIDER_CONFIGS,
-  AI_PROVIDERS,
-} from "../config/ai.config";
+// ============= src/services/ai.service.js (Updated for Backend) =============
+import { getCurrentConfig } from "../config/ai.config";
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
 export class AIService {
   static async sendMessage(messages, onChunk, onComplete, onError) {
@@ -15,377 +13,76 @@ export class AIService {
     }
 
     try {
-      switch (config.provider) {
-        case AI_PROVIDERS.OPENAI:
-          return await this.sendOpenAIMessage(
-            messages,
-            config,
-            onChunk,
-            onComplete,
-            onError
-          );
-        case AI_PROVIDERS.ANTHROPIC:
-          return await this.sendAnthropicMessage(
-            messages,
-            config,
-            onChunk,
-            onComplete,
-            onError
-          );
-        case AI_PROVIDERS.GEMINI:
-          return await this.sendGeminiMessage(
-            messages,
-            config,
-            onChunk,
-            onComplete,
-            onError
-          );
-        case AI_PROVIDERS.ZHIPU:
-          return await this.sendZhipuMessage(
-            messages,
-            config,
-            onChunk,
-            onComplete,
-            onError
-          );
-        case AI_PROVIDERS.QWEN:
-          return await this.sendQwenMessage(
-            messages,
-            config,
-            onChunk,
-            onComplete,
-            onError
-          );
-        case AI_PROVIDERS.BAIDU:
-          return await this.sendBaiduMessage(
-            messages,
-            config,
-            onChunk,
-            onComplete,
-            onError
-          );
-        case AI_PROVIDERS.CUSTOM:
-          return await this.sendCustomMessage(
-            messages,
-            config,
-            onChunk,
-            onComplete,
-            onError
-          );
-        default:
-          onError(new Error(`不支持的AI提供商: ${config.provider}`));
+      // 根据不同的提供商调用不同的后端接口
+      const endpoint = this.getBackendEndpoint(config.provider);
+
+      if (config.streaming) {
+        await this.handleStreamingRequest(
+          endpoint,
+          messages,
+          config,
+          onChunk,
+          onComplete,
+          onError
+        );
+      } else {
+        await this.handleNonStreamingRequest(
+          endpoint,
+          messages,
+          config,
+          onComplete,
+          onError
+        );
       }
     } catch (error) {
+      console.error("AI服务调用失败:", error);
       onError(error);
     }
   }
 
-  // OpenAI格式的API调用（支持OpenAI、自定义兼容API）
-  static async sendOpenAIMessage(
-    messages,
-    config,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    const url = `${config.config.baseURL}${config.config.chatEndpoint}`;
-    const headers = this.buildHeaders(
-      config.config.headers,
-      config.config.apiKey
-    );
-
-    const payload = {
-      model: config.model,
-      messages: this.formatMessages(messages, config.provider),
-      stream: config.streaming,
-      temperature: 0.7,
-      max_tokens: 2000,
+  // 获取后端接口端点
+  static getBackendEndpoint(provider) {
+    const endpoints = {
+      openai: "/api/openai/chat",
+      anthropic: "/api/anthropic/chat",
+      zhipu: "/api/zhipu/chat",
+      qwen: "/api/qwen/chat",
+      gemini: "/api/gemini/chat",
+      custom: "/api/openai/chat", // 自定义API通常兼容OpenAI格式
     };
 
-    if (config.streaming) {
-      return await this.handleStreamingResponse(
-        url,
-        headers,
-        payload,
-        onChunk,
-        onComplete,
-        onError
-      );
-    } else {
-      return await this.handleNonStreamingResponse(
-        url,
-        headers,
-        payload,
-        onComplete,
-        onError
-      );
-    }
+    return endpoints[provider] || endpoints.openai;
   }
 
-  // 智谱AI (兼容OpenAI格式)
-  static async sendZhipuMessage(
+  // 处理流式请求
+  static async handleStreamingRequest(
+    endpoint,
     messages,
     config,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    return await this.sendOpenAIMessage(
-      messages,
-      config,
-      onChunk,
-      onComplete,
-      onError
-    );
-  }
-
-  // 自定义API (兼容OpenAI格式)
-  static async sendCustomMessage(
-    messages,
-    config,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    return await this.sendOpenAIMessage(
-      messages,
-      config,
-      onChunk,
-      onComplete,
-      onError
-    );
-  }
-
-  // Anthropic Claude API
-  static async sendAnthropicMessage(
-    messages,
-    config,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    const url = `${config.config.baseURL}${config.config.chatEndpoint}`;
-    const headers = this.buildHeaders(
-      config.config.headers,
-      config.config.apiKey
-    );
-
-    // Anthropic使用不同的消息格式
-    const systemMessage = messages.find((m) => m.role === "system");
-    const chatMessages = messages.filter((m) => m.role !== "system");
-
-    const payload = {
-      model: config.model,
-      max_tokens: 2000,
-      messages: chatMessages.map((msg) => ({
-        role: msg.role === "assistant" ? "assistant" : "user",
-        content: msg.content,
-      })),
-      stream: config.streaming,
-    };
-
-    if (systemMessage) {
-      payload.system = systemMessage.content;
-    }
-
-    if (config.streaming) {
-      return await this.handleAnthropicStreamingResponse(
-        url,
-        headers,
-        payload,
-        onChunk,
-        onComplete,
-        onError
-      );
-    } else {
-      return await this.handleAnthropicNonStreamingResponse(
-        url,
-        headers,
-        payload,
-        onComplete,
-        onError
-      );
-    }
-  }
-
-  // Google Gemini API
-  static async sendGeminiMessage(
-    messages,
-    config,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    let url = `${config.config.baseURL}${config.config.chatEndpoint}`;
-    url = url
-      .replace("{model}", config.model)
-      .replace("{API_KEY}", config.config.apiKey);
-
-    const headers = { "Content-Type": "application/json" };
-
-    const payload = {
-      contents: messages
-        .filter((m) => m.role !== "system")
-        .map((msg) => ({
-          role: msg.role === "assistant" ? "model" : "user",
-          parts: [{ text: msg.content }],
-        })),
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2000,
-      },
-    };
-
-    // Gemini的系统消息处理
-    const systemMessage = messages.find((m) => m.role === "system");
-    if (systemMessage) {
-      payload.systemInstruction = {
-        parts: [{ text: systemMessage.content }],
-      };
-    }
-
-    if (config.streaming) {
-      return await this.handleGeminiStreamingResponse(
-        url,
-        headers,
-        payload,
-        onChunk,
-        onComplete,
-        onError
-      );
-    } else {
-      return await this.handleGeminiNonStreamingResponse(
-        url,
-        headers,
-        payload,
-        onComplete,
-        onError
-      );
-    }
-  }
-
-  // 通义千问API
-  static async sendQwenMessage(messages, config, onChunk, onComplete, onError) {
-    const url = `${config.config.baseURL}${config.config.chatEndpoint}`;
-    const headers = this.buildHeaders(
-      config.config.headers,
-      config.config.apiKey
-    );
-
-    const payload = {
-      model: config.model,
-      input: {
-        messages: this.formatMessages(messages, config.provider),
-      },
-      parameters: {
-        temperature: 0.7,
-        max_tokens: 2000,
-        incremental_output: config.streaming,
-      },
-    };
-
-    if (config.streaming) {
-      return await this.handleQwenStreamingResponse(
-        url,
-        headers,
-        payload,
-        onChunk,
-        onComplete,
-        onError
-      );
-    } else {
-      return await this.handleQwenNonStreamingResponse(
-        url,
-        headers,
-        payload,
-        onComplete,
-        onError
-      );
-    }
-  }
-
-  // 百度文心一言API
-  static async sendBaiduMessage(
-    messages,
-    config,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    // 百度需要先获取access_token
-    const accessToken = await this.getBaiduAccessToken(
-      config.config.apiKey,
-      config.config.secretKey
-    );
-    const url = `${config.config.baseURL}${config.config.chatEndpoint}?access_token=${accessToken}`;
-
-    const headers = { "Content-Type": "application/json" };
-
-    const payload = {
-      messages: this.formatMessages(messages, config.provider),
-      stream: config.streaming,
-      temperature: 0.7,
-      max_output_tokens: 2000,
-    };
-
-    if (config.streaming) {
-      return await this.handleBaiduStreamingResponse(
-        url,
-        headers,
-        payload,
-        onChunk,
-        onComplete,
-        onError
-      );
-    } else {
-      return await this.handleBaiduNonStreamingResponse(
-        url,
-        headers,
-        payload,
-        onComplete,
-        onError
-      );
-    }
-  }
-
-  // 构建请求头
-  static buildHeaders(headerTemplate, apiKey) {
-    const headers = {};
-    Object.entries(headerTemplate).forEach(([key, value]) => {
-      headers[key] = value.replace("{API_KEY}", apiKey);
-    });
-    return headers;
-  }
-
-  // 格式化消息
-  static formatMessages(messages, provider) {
-    return messages.map((msg) => ({
-      role: msg.role,
-      content: msg.content,
-    }));
-  }
-
-  // 处理流式响应 (OpenAI格式)
-  static async handleStreamingResponse(
-    url,
-    headers,
-    payload,
     onChunk,
     onComplete,
     onError
   ) {
     try {
-      const response = await fetch(url, {
+      const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
-        headers,
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: this.formatMessages(messages),
+          model: config.model,
+          stream: true,
+          apiKey: config.config.apiKey,
+          temperature: 0.7,
+          max_tokens: 2000,
+        }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(
-          errorData.error?.message ||
-            `HTTP ${response.status}: ${response.statusText}`
+          errorData.error || `HTTP ${response.status}: ${response.statusText}`
         );
       }
 
@@ -412,14 +109,51 @@ export class AIService {
 
             try {
               const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content || "";
+              let content = "";
+
+              // 处理不同提供商的响应格式
+              if (
+                config.provider === "openai" ||
+                config.provider === "zhipu" ||
+                config.provider === "custom"
+              ) {
+                content = parsed.choices?.[0]?.delta?.content || "";
+              } else if (config.provider === "anthropic") {
+                if (parsed.type === "content_block_delta") {
+                  content = parsed.delta?.text || "";
+                } else if (parsed.type === "message_stop") {
+                  onComplete(fullContent);
+                  return;
+                }
+              } else if (config.provider === "qwen") {
+                content = parsed.output?.text || "";
+                if (content && content !== fullContent) {
+                  const newContent = content.slice(fullContent.length);
+                  fullContent = content;
+                  if (newContent) {
+                    onChunk(newContent, fullContent);
+                  }
+                  continue;
+                }
+              } else if (config.provider === "gemini") {
+                content =
+                  parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                if (content && content !== fullContent) {
+                  const newContent = content.slice(fullContent.length);
+                  fullContent = content;
+                  if (newContent) {
+                    onChunk(newContent, fullContent);
+                  }
+                  continue;
+                }
+              }
 
               if (content) {
                 fullContent += content;
                 onChunk(content, fullContent);
               }
             } catch (e) {
-              // 忽略解析错误的数据块
+              console.warn("解析流式数据失败:", e, data);
             }
           }
         }
@@ -427,266 +161,145 @@ export class AIService {
 
       onComplete(fullContent);
     } catch (error) {
+      console.error("流式请求失败:", error);
       onError(error);
     }
   }
 
-  // 处理非流式响应 (OpenAI格式)
-  static async handleNonStreamingResponse(
-    url,
-    headers,
-    payload,
+  // 处理非流式请求
+  static async handleNonStreamingRequest(
+    endpoint,
+    messages,
+    config,
     onComplete,
     onError
   ) {
     try {
-      const response = await fetch(url, {
+      const response = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
-        headers,
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: this.formatMessages(messages),
+          model: config.model,
+          stream: false,
+          apiKey: config.config.apiKey,
+          temperature: 0.7,
+          max_tokens: 2000,
+        }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(
-          errorData.error?.message ||
-            `HTTP ${response.status}: ${response.statusText}`
+          errorData.error || `HTTP ${response.status}: ${response.statusText}`
         );
       }
 
       const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || "";
+      let content = "";
+
+      // 处理不同提供商的响应格式
+      if (
+        config.provider === "openai" ||
+        config.provider === "zhipu" ||
+        config.provider === "custom"
+      ) {
+        content = data.choices?.[0]?.message?.content || "";
+      } else if (config.provider === "anthropic") {
+        content = data.content?.[0]?.text || "";
+      } else if (config.provider === "qwen") {
+        content = data.output?.text || "";
+      } else if (config.provider === "gemini") {
+        content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      }
+
       onComplete(content);
     } catch (error) {
+      console.error("非流式请求失败:", error);
       onError(error);
     }
   }
 
-  // Anthropic流式响应处理
-  static async handleAnthropicStreamingResponse(
-    url,
-    headers,
-    payload,
-    onChunk,
-    onComplete,
-    onError
-  ) {
+  // 格式化消息
+  static formatMessages(messages) {
+    return messages.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    }));
+  }
+
+  // 测试API连接
+  static async testConnection(provider, apiKey) {
     try {
-      const response = await fetch(url, {
+      const response = await fetch(`${BACKEND_URL}/api/test`, {
         method: "POST",
-        headers,
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider,
+          apiKey,
+        }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          errorData.error?.message ||
-            `HTTP ${response.status}: ${response.statusText}`
-        );
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullContent = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n").filter((line) => line.trim());
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-
-            try {
-              const parsed = JSON.parse(data);
-
-              if (parsed.type === "content_block_delta") {
-                const content = parsed.delta?.text || "";
-                if (content) {
-                  fullContent += content;
-                  onChunk(content, fullContent);
-                }
-              } else if (parsed.type === "message_stop") {
-                onComplete(fullContent);
-                return;
-              }
-            } catch (e) {
-              // 忽略解析错误
-            }
-          }
-        }
-      }
-
-      onComplete(fullContent);
+      const result = await response.json();
+      return result;
     } catch (error) {
-      onError(error);
+      console.error("连接测试失败:", error);
+      return {
+        success: false,
+        message: error.message || "连接测试失败",
+      };
     }
   }
 
-  // Gemini流式响应处理
-  static async handleGeminiStreamingResponse(
-    url,
-    headers,
-    payload,
-    onChunk,
-    onComplete,
-    onError
-  ) {
+  // 检查后端服务状态
+  static async checkBackendHealth() {
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
+      const response = await fetch(`${BACKEND_URL}/api/health`, {
+        method: "GET",
+        timeout: 5000,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          errorData.error?.message ||
-            `HTTP ${response.status}: ${response.statusText}`
-        );
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          status: "online",
+          data,
+        };
+      } else {
+        return {
+          status: "error",
+          error: `HTTP ${response.status}`,
+        };
       }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullContent = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n").filter((line) => line.trim());
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-
-            try {
-              const parsed = JSON.parse(data);
-              const content =
-                parsed.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-              if (content) {
-                const newContent = content.slice(fullContent.length);
-                fullContent = content;
-                if (newContent) {
-                  onChunk(newContent, fullContent);
-                }
-              }
-            } catch (e) {
-              // 忽略解析错误
-            }
-          }
-        }
-      }
-
-      onComplete(fullContent);
     } catch (error) {
-      onError(error);
+      console.error("后端健康检查失败:", error);
+      return {
+        status: "offline",
+        error: error.message,
+      };
     }
   }
 
-  // 获取百度Access Token
-  static async getBaiduAccessToken(apiKey, secretKey) {
-    const url = `https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${apiKey}&client_secret=${secretKey}`;
+  // 获取错误信息的友好提示
+  static getErrorMessage(error) {
+    const message = error.message || "未知错误";
 
-    const response = await fetch(url, { method: "POST" });
-    const data = await response.json();
-
-    if (data.access_token) {
-      return data.access_token;
+    if (message.includes("fetch")) {
+      return "无法连接到后端服务，请检查后端服务是否正常运行";
+    } else if (message.includes("401")) {
+      return "API密钥无效或已过期，请检查配置";
+    } else if (message.includes("429")) {
+      return "API调用频率过高，请稍后再试";
+    } else if (message.includes("quota")) {
+      return "API配额已用完，请检查账户余额";
+    } else if (message.includes("timeout")) {
+      return "请求超时，请检查网络连接";
     } else {
-      throw new Error("获取百度Access Token失败");
+      return message;
     }
-  }
-
-  // 通义千问流式响应处理
-  static async handleQwenStreamingResponse(
-    url,
-    headers,
-    payload,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    // 通义千问的流式处理逻辑
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullContent = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n").filter((line) => line.trim());
-
-        for (const line of lines) {
-          if (line.startsWith("data:")) {
-            const data = line.slice(5).trim();
-
-            try {
-              const parsed = JSON.parse(data);
-              const content = parsed.output?.text || "";
-
-              if (content && content !== fullContent) {
-                const newContent = content.slice(fullContent.length);
-                fullContent = content;
-                if (newContent) {
-                  onChunk(newContent, fullContent);
-                }
-              }
-
-              if (parsed.output?.finish_reason === "stop") {
-                onComplete(fullContent);
-                return;
-              }
-            } catch (e) {
-              // 忽略解析错误
-            }
-          }
-        }
-      }
-
-      onComplete(fullContent);
-    } catch (error) {
-      onError(error);
-    }
-  }
-
-  // 百度流式响应处理
-  static async handleBaiduStreamingResponse(
-    url,
-    headers,
-    payload,
-    onChunk,
-    onComplete,
-    onError
-  ) {
-    // 类似OpenAI的处理方式
-    return await this.handleStreamingResponse(
-      url,
-      headers,
-      payload,
-      onChunk,
-      onComplete,
-      onError
-    );
   }
 }
