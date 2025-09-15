@@ -1,7 +1,7 @@
-// ============= src/config/ai.config.js =============
+// ============= server/ai.config.js =============
 // AI模型配置文件 - 支持多种大模型提供商
 
-export const AI_PROVIDERS = {
+const AI_PROVIDERS = {
   OPENAI: "openai",
   ANTHROPIC: "anthropic",
   GEMINI: "gemini",
@@ -11,7 +11,7 @@ export const AI_PROVIDERS = {
   CUSTOM: "custom",
 };
 
-export const AI_MODELS = {
+const AI_MODELS = {
   // OpenAI
   "gpt-4": { provider: AI_PROVIDERS.OPENAI, name: "GPT-4" },
   "gpt-4-turbo": { provider: AI_PROVIDERS.OPENAI, name: "GPT-4 Turbo" },
@@ -49,7 +49,7 @@ export const AI_MODELS = {
   "ernie-bot-turbo": { provider: AI_PROVIDERS.BAIDU, name: "文心一言 Turbo" },
 };
 
-export const DEFAULT_CONFIG = {
+const DEFAULT_CONFIG = {
   // 默认使用的模型
   defaultModel: "gpt-3.5-turbo",
 
@@ -73,7 +73,7 @@ export const DEFAULT_CONFIG = {
 };
 
 // 各个提供商的API配置
-export const PROVIDER_CONFIGS = {
+const PROVIDER_CONFIGS = {
   [AI_PROVIDERS.OPENAI]: {
     baseURL: "https://api.openai.com/v1",
     headers: {
@@ -146,80 +146,9 @@ export const PROVIDER_CONFIGS = {
   },
 };
 
-// 获取当前配置 - 优先从 localStorage 读取
-export const getCurrentConfig = () => {
-  const currentModel =
-    localStorage.getItem("selectedModel") || DEFAULT_CONFIG.defaultModel;
-  const modelInfo = AI_MODELS[currentModel];
-
-  if (!modelInfo) {
-    console.warn(`未找到模型配置: ${currentModel}，使用默认模型`);
-    return {
-      model: DEFAULT_CONFIG.defaultModel,
-      modelInfo: AI_MODELS[DEFAULT_CONFIG.defaultModel],
-      provider: AI_MODELS[DEFAULT_CONFIG.defaultModel].provider,
-      config: {
-        ...PROVIDER_CONFIGS[AI_MODELS[DEFAULT_CONFIG.defaultModel].provider],
-        apiKey: getApiKey(AI_MODELS[DEFAULT_CONFIG.defaultModel].provider),
-      },
-      streaming: getStreamingEnabled(),
-    };
-  }
-
-  const providerConfig = PROVIDER_CONFIGS[modelInfo.provider];
-
-  return {
-    model: currentModel,
-    modelInfo,
-    provider: modelInfo.provider,
-    config: {
-      ...providerConfig,
-      apiKey: getApiKey(modelInfo.provider),
-    },
-    streaming: getStreamingEnabled(),
-  };
-};
-
-// 获取API密钥 - 优先从 localStorage，然后是环境变量
-export const getApiKey = (provider) => {
-  const localKey = localStorage.getItem(`${provider}_api_key`);
-  if (localKey) return localKey;
-
-  // 从环境变量获取 (Client-side doesn't have process.env for VITE_ vars)
-  // This part will be handled by the server for actual API calls
-  return "";
-};
-
-// 获取流式输出配置
-export const getStreamingEnabled = () => {
-  const stored = localStorage.getItem("streamingEnabled");
-  if (stored !== null) {
-    return stored === "true";
-  }
-  return DEFAULT_CONFIG.streaming;
-};
-
-// 验证配置是否完整
-export const validateConfig = (provider) => {
-  const config = PROVIDER_CONFIGS[provider];
-  if (!config) return false;
-
-  const apiKey = getApiKey(provider);
-  if (!config.baseURL || !apiKey) return false;
-
-  // 百度需要额外的secret key
-  if (provider === AI_PROVIDERS.BAIDU) {
-    const secretKey =
-      localStorage.getItem(`${provider}_secret_key`);
-    if (!secretKey) return false;
-  }
-
-  return true;
-};
-
-// 获取所有可用的模型列表
-export const getAvailableModels = () => {
-  return Object.entries(AI_MODELS).filter(([modelId, modelInfo]) => {
-    return validateConfig(modelInfo.provider);
-  });
+module.exports = {
+  AI_PROVIDERS,
+  AI_MODELS,
+  DEFAULT_CONFIG,
+  PROVIDER_CONFIGS,
 };

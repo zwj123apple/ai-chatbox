@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import { Plus, MessageSquare, LogOut, Settings, Sun, Moon } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { StorageService } from "../../services/storage.service";
-import { getCurrentConfig, onConfigUpdate } from "../../config/ai.config";
+import { getCurrentConfig } from "../../config/ai.config";
 import ConversationItem from "./ConversationItem";
 import AISettings from "../../settings/AISettings";
 
@@ -12,36 +12,21 @@ export default function Sidebar({ darkMode, onToggleDarkMode }) {
   const [showSettings, setShowSettings] = useState(false);
   const [aiConfig, setAiConfig] = useState(() => getCurrentConfig());
 
-  // 监听配置更新
-  useEffect(() => {
-    const updateConfig = () => {
-      setAiConfig(getCurrentConfig());
-    };
-
-    // 监听 localStorage 变化
-    const handleStorageChange = () => {
-      updateConfig();
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-
-    // 设置定时器定期更新配置（防止某些情况下 storage 事件不触发）
-    const intervalId = setInterval(updateConfig, 1000);
-
-    return () => {
-      window.removeEventListener("storage", handleStorageChange);
-      clearInterval(intervalId);
-    };
-  }, []);
-
-  // 当设置面板关闭时，更新配置
   const handleSettingsClose = () => {
     setShowSettings(false);
-    // 延迟更新配置，确保 localStorage 已经更新
-    setTimeout(() => {
-      setAiConfig(getCurrentConfig());
-    }, 100);
   };
+
+  useEffect(() => {
+    const handleConfigUpdate = () => {
+      setAiConfig(getCurrentConfig());
+    };
+
+    window.addEventListener('aiConfigUpdated', handleConfigUpdate);
+
+    return () => {
+      window.removeEventListener('aiConfigUpdated', handleConfigUpdate);
+    };
+  }, []);
 
   const createNewConversation = () => {
     const newConv = StorageService.createConversation(currentUser.id);

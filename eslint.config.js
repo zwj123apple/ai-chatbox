@@ -5,7 +5,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import { defineConfig, globalIgnores } from "eslint/config";
 
 export default defineConfig([
-  globalIgnores(["dist"]),
+  globalIgnores(["dist", "server"]),
   {
     // env: {
     //   browser: true, // 浏览器环境（Vite 项目最终运行在浏览器）
