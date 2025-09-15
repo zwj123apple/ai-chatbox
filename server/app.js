@@ -262,6 +262,181 @@ app.post("/api/zhipu/chat", async (req, res) => {
   }
 });
 
+// ============= Anthropic Claude处理 =============
+app.post("/api/anthropic/chat", async (req, res) => {
+  try {
+    const { messages, model, stream = true, apiKey, ...otherParams } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: "API密钥未提供" });
+    }
+
+    const axiosInstance = createAxiosInstance(AI_SERVICES.anthropic.baseURL, {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    });
+
+    // 转换消息格式
+    const systemMessage = messages.find((m) => m.role === "system");
+    const chatMessages = messages.filter((m) => m.role !== "system");
+
+    const payload = {
+      model: model || AI_SERVICES.anthropic.defaultModel,
+      max_tokens: 2000,
+      messages: chatMessages,
+      stream,
+      ...otherParams,
+    };
+
+    if (systemMessage) {
+      payload.system = systemMessage.content;
+    }
+
+    if (stream) {
+      const response = await axiosInstance.post("/v1/messages", payload, {
+        responseType: "stream",
+      });
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      response.data.pipe(res);
+    } else {
+      const response = await axiosInstance.post("/v1/messages", payload);
+      res.json(response.data);
+    }
+  } catch (error) {
+    console.error("Claude API错误:", error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error:
+        error.response?.data?.error?.message ||
+        error.message ||
+        "Claude API调用失败",
+    });
+  }
+});
+
+// ============= 通义千问处理 =============
+app.post("/api/qwen/chat", async (req, res) => {
+  try {
+    const { messages, model, stream = true, apiKey, ...otherParams } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: "API密钥未提供" });
+    }
+
+    const axiosInstance = createAxiosInstance(AI_SERVICES.qwen.baseURL, {
+      Authorization: `Bearer ${apiKey}`,
+      "X-DashScope-SSE": "enable",
+    });
+
+    const payload = {
+      model: model || AI_SERVICES.qwen.defaultModel,
+      input: { messages },
+      parameters: {
+        temperature: 0.7,
+        max_tokens: 2000,
+        incremental_output: stream,
+        ...otherParams,
+      },
+    };
+
+    if (stream) {
+      const response = await axiosInstance.post(
+        "/services/aigc/text-generation/generation",
+        payload,
+        {
+          responseType: "stream",
+        }
+      );
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      response.data.pipe(res);
+    } else {
+      const response = await axiosInstance.post(
+        "/services/aigc/text-generation/generation",
+        payload
+      );
+      res.json(response.data);
+    }
+  } catch (error) {
+    console.error("通义千问错误:", error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error:
+        error.response?.data?.error?.message ||
+        error.message ||
+        "通义千问调用失败",
+    });
+  }
+});
+
+// ============= Google Gemini处理 =============
+app.post("/api/gemini/chat", async (req, res) => {
+  try {
+    const { messages, model, stream = true, apiKey, ...otherParams } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: "API密钥未提供" });
+    }
+
+    const modelName = model || AI_SERVICES.gemini.defaultModel;
+    const endpoint = stream
+      ? `/models/${modelName}:streamGenerateContent?key=${apiKey}`
+      : `/models/${modelName}:generateContent?key=${apiKey}`;
+
+    const axiosInstance = createAxiosInstance(AI_SERVICES.gemini.baseURL);
+
+    // 转换消息格式
+    const systemMessage = messages.find((m) => m.role === "system");
+    const chatMessages = messages.filter((m) => m.role !== "system");
+
+    const payload = {
+      contents: chatMessages.map((msg) => ({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: msg.content }],
+      })),
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 2000,
+        ...otherParams,
+      },
+    };
+
+    if (systemMessage) {
+      payload.systemInstruction = {
+        parts: [{ text: systemMessage.content }],
+      };
+    }
+
+    if (stream) {
+      const response = await axiosInstance.post(endpoint, payload, {
+        responseType: "stream",
+      });
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      response.data.pipe(res);
+    } else {
+      const response = await axiosInstance.post(endpoint, payload);
+      res.json(response.data);
+    }
+  } catch (error) {
+    console.error("Gemini API错误:", error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error:
+        error.response?.data?.error?.message ||
+        error.message ||
+        "Gemini API调用失败",
+    });
+  }
+});
+
 // ============= 配置测试 (增强版) =============
 app.post("/api/test", async (req, res) => {
   console.log("收到API测试请求");
