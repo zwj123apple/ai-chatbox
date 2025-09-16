@@ -1,18 +1,17 @@
-// ============= src/components/chat/ChatArea.jsx (Updated for Enhanced Renderer) =============
+// ============= src/components/chat/ChatArea.jsx (Updated with Streaming) =============
 import React, { useState, useRef, useEffect } from "react";
-import { Menu, MessageSquare, Bookmark, Download } from "lucide-react";
-import { useApp } from "../../context/AppContext";
-import { StorageService } from "../../services/storage.service";
-import { AIService } from "../../services/ai.service";
-import StreamingMessageBubble from "./StreamingMessageBubble";
-import MessageInput from "./MessageInput";
+import { Menu, MessageSquare, Settings } from "lucide-react";
+import { useApp } from "../../context/AppContext.jsx";
+import { StorageService } from "../../services/storage.service.js";
+import { AIService } from "../../services/ai.service.js";
+import StreamingMessageBubble from "./StreamingMessageBubbleBak.jsx";
+import MessageInput from "./MessageInput.jsx";
 
 export default function ChatArea({ darkMode }) {
   const { currentUser, userData, updateUserData } = useApp();
   const [isLoading, setIsLoading] = useState(false);
   const [streamingMessage, setStreamingMessage] = useState(null);
   const [currentStreamingContent, setCurrentStreamingContent] = useState("");
-  const [bookmarkedMessages, setBookmarkedMessages] = useState(new Set());
   const messagesEndRef = useRef(null);
 
   const activeConversation = userData?.conversations.find(
@@ -26,14 +25,6 @@ export default function ChatArea({ darkMode }) {
   useEffect(() => {
     scrollToBottom();
   }, [activeConversation?.messages, currentStreamingContent]);
-
-  // 加载书签状态
-  useEffect(() => {
-    const savedBookmarks = localStorage.getItem(`bookmarks_${currentUser?.id}`);
-    if (savedBookmarks) {
-      setBookmarkedMessages(new Set(JSON.parse(savedBookmarks)));
-    }
-  }, [currentUser]);
 
   const handleSendMessage = async (content) => {
     if (!activeConversation || !currentUser) return;
@@ -61,31 +52,16 @@ export default function ChatArea({ darkMode }) {
     };
     setStreamingMessage(tempAiMessage);
 
-    const updatedUserData = StorageService.getUserData(currentUser.id);
-    const updatedConversation = updatedUserData.conversations.find(
-      (conv) => conv.id === activeConversation.id
-    );
     // 准备对话历史
-    const messages = updatedConversation.messages.map((msg) => ({
+    const messages = activeConversation.messages.map((msg) => ({
       role: msg.type === "user" ? "user" : "assistant",
       content: msg.content,
     }));
 
-    // 添加系统提示
+    // 添加系统提示（可选）
     const systemMessage = {
       role: "system",
-      content: `你是一个有帮助的AI助手。请用中文回答用户的问题。
-
-响应格式要求：
-- 支持Markdown格式，包括代码块、表格、列表等
-- 代码块请使用\`\`\`语言\n代码\n\`\`\`格式
-- 数学公式使用LaTeX格式，如 $E=mc^2$ 或 $$\\int_a^b f(x)dx$$
-- 表格使用标准Markdown表格格式
-- 可以使用任务列表：- [ ] 未完成 - [x] 已完成
-- 支持链接：[链接文字](URL)
-- 支持强调：**粗体** 和 *斜体*
-
-请提供结构化、易读的回答。`,
+      content: "你是一个有帮助的AI助手，请用中文回答用户的问题。",
     };
     const fullMessages = [systemMessage, ...messages];
 
@@ -131,17 +107,7 @@ export default function ChatArea({ darkMode }) {
         // 添加错误消息
         const errorMessage = {
           type: "assistant",
-          content: `❌ **发生错误**
-
-抱歉，发生了错误：${error.message}
-
-**可能的解决方案：**
-1. 检查网络连接是否正常
-2. 确认API密钥配置正确
-3. 检查后端服务是否正常运行
-4. 稍后重试
-
-如果问题持续存在，请联系技术支持。`,
+          content: `抱歉，发生了错误：${error.message}\n\n请检查您的网络连接和API配置。`,
           error: true,
         };
 
@@ -154,117 +120,6 @@ export default function ChatArea({ darkMode }) {
         updateUserData(updatedData);
       }
     );
-  };
-
-  // 重新生成回答
-  const handleRegenerate = async (messageId) => {
-    if (!activeConversation || isLoading) return;
-
-    // 找到要重新生成的消息
-    const messageIndex = activeConversation.messages.findIndex(
-      (m) => m.id === messageId
-    );
-    if (messageIndex === -1) return;
-
-    // 获取该消息之前的对话历史（不包括要重新生成的消息）
-    const messagesBeforeRegenerate = activeConversation.messages.slice(
-      0,
-      messageIndex
-    );
-    const lastUserMessage = [...messagesBeforeRegenerate]
-      .reverse()
-      .find((m) => m.type === "user");
-
-    if (!lastUserMessage) return;
-
-    // 删除原消息及其之后的消息
-    const updatedConversation = {
-      ...activeConversation,
-      messages: messagesBeforeRegenerate,
-    };
-
-    const newData = { ...userData };
-    const convIndex = newData.conversations.findIndex(
-      (c) => c.id === activeConversation.id
-    );
-    newData.conversations[convIndex] = updatedConversation;
-    updateUserData(newData);
-
-    // 重新发送最后一条用户消息
-    await handleSendMessage(lastUserMessage.content);
-  };
-
-  // 反馈处理
-  const handleFeedback = (messageId, type) => {
-    console.log(`Message ${messageId} received ${type} feedback`);
-    // 这里可以发送反馈到后端或本地存储
-    const feedbacks = JSON.parse(
-      localStorage.getItem("message_feedbacks") || "{}"
-    );
-    feedbacks[messageId] = { type, timestamp: new Date().toISOString() };
-    localStorage.setItem("message_feedbacks", JSON.stringify(feedbacks));
-  };
-
-  // 书签处理
-  const handleBookmark = (messageId, isBookmarked) => {
-    const newBookmarks = new Set(bookmarkedMessages);
-    if (isBookmarked) {
-      newBookmarks.add(messageId);
-    } else {
-      newBookmarks.delete(messageId);
-    }
-
-    setBookmarkedMessages(newBookmarks);
-    localStorage.setItem(
-      `bookmarks_${currentUser.id}`,
-      JSON.stringify([...newBookmarks])
-    );
-  };
-
-  // 分享处理
-  const handleShare = (messageId) => {
-    console.log(`Sharing message ${messageId}`);
-    // 这里可以实现分享功能
-  };
-
-  // 导出整个对话
-  const handleExportConversation = () => {
-    if (!activeConversation) return;
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const content = `# ${activeConversation.title}
-
-**创建时间：** ${activeConversation.createdAt.toLocaleString()}  
-**更新时间：** ${activeConversation.updatedAt.toLocaleString()}  
-**消息总数：** ${activeConversation.messages.length}
-
----
-
-${activeConversation.messages
-  .map(
-    (msg, index) => `
-## ${index + 1}. ${msg.type === "user" ? "👤 用户" : "🤖 AI助手"}
-
-**时间：** ${msg.timestamp.toLocaleString()}
-
-${msg.content}
-
----
-`
-  )
-  .join("\n")}
-
-> 导出时间: ${new Date().toLocaleString()}`;
-
-    const blob = new Blob([content], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `conversation-${activeConversation.title}-${timestamp}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   const toggleSidebar = () => {
@@ -326,9 +181,8 @@ ${msg.content}
           </p>
         </div>
 
-        {/* 对话操作按钮 */}
+        {/* AI状态指示器 */}
         <div className="flex items-center gap-2">
-          {/* AI状态指示器 */}
           {isLoading && (
             <div
               className={`flex items-center gap-2 px-3 py-1 rounded-full ${
@@ -345,34 +199,6 @@ ${msg.content}
               <span className="text-sm">AI思考中...</span>
             </div>
           )}
-
-          {/* 书签统计 */}
-          {bookmarkedMessages.size > 0 && (
-            <div
-              className={`flex items-center gap-1 px-2 py-1 rounded ${
-                darkMode
-                  ? "bg-yellow-900 text-yellow-300"
-                  : "bg-yellow-100 text-yellow-700"
-              }`}
-              title="收藏的消息"
-            >
-              <Bookmark size={14} />
-              <span className="text-xs">{bookmarkedMessages.size}</span>
-            </div>
-          )}
-
-          {/* 导出对话按钮 */}
-          <button
-            onClick={handleExportConversation}
-            className={`p-2 rounded-lg transition-colors ${
-              darkMode
-                ? "hover:bg-gray-700 text-gray-400 hover:text-white"
-                : "hover:bg-gray-100 text-gray-500 hover:text-gray-700"
-            }`}
-            title="导出完整对话"
-          >
-            <Download size={16} />
-          </button>
 
           <div
             className={`text-right text-sm ${
@@ -395,10 +221,6 @@ ${msg.content}
               message={message}
               darkMode={darkMode}
               isStreaming={false}
-              onRegenerate={handleRegenerate}
-              onFeedback={handleFeedback}
-              onShare={handleShare}
-              onBookmark={handleBookmark}
             />
           ))}
 

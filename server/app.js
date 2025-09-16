@@ -1,4 +1,4 @@
-// ============= server/app.js (CORS修复版) =============
+// ============= server/app.js (CORS修复版, 代理选择性应用) =============
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
@@ -32,8 +32,6 @@ app.use(express.urlencoded({ extended: true }));
 
 // 代理配置
 const PROXY_URL = process.env.PROXY_URL;
-const agent = PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : undefined;
-
 // 增强的日志中间件
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
@@ -62,7 +60,8 @@ const AI_SERVICES = {
   },
   qwen: {
     baseURL:
-      process.env.QWEN_BASE_URL || "https://dashscope.aliyuncs.com/api/v1",
+      process.env.QWEN_BASE_URL ||
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
     defaultModel: "qwen-turbo",
   },
   gemini: {
@@ -73,8 +72,14 @@ const AI_SERVICES = {
   },
 };
 
-// 创建axios实例的工厂函数
-const createAxiosInstance = (baseURL, headers = {}) => {
+/**
+ * 创建axios实例的工厂函数
+ * @param {string} provider - 服务商名称 (e.g., 'openai', 'zhipu')
+ * @param {string} baseURL - API的基础URL
+ * @param {object} headers - 自定义请求头
+ * @returns {axios.AxiosInstance}
+ */
+const createAxiosInstance = (provider, baseURL, headers = {}) => {
   const config = {
     baseURL,
     timeout: 30000,
@@ -84,10 +89,17 @@ const createAxiosInstance = (baseURL, headers = {}) => {
     },
   };
 
-  if (agent) {
+  // 定义哪些服务需要走代理
+  const providersNeedingProxy = ["openai", "anthropic", "gemini"];
+
+  // 如果设置了代理URL，并且当前服务商在需要代理的列表中，则应用代理
+  if (PROXY_URL && providersNeedingProxy.includes(provider)) {
+    const agent = new HttpsProxyAgent(PROXY_URL);
     config.httpsAgent = agent;
     config.httpAgent = agent;
-    console.log(`使用代理: ${PROXY_URL}`);
+    console.log(`[${provider}] 使用代理: ${PROXY_URL}`);
+  } else {
+    console.log(`[${provider}] 未使用代理`);
   }
 
   return axios.create(config);
@@ -115,6 +127,7 @@ app.get("/api/health", (req, res) => {
 
   if (PROXY_URL) {
     healthData.proxyUrl = PROXY_URL;
+    healthData.proxyFor = ["openai", "anthropic", "gemini"];
   }
 
   console.log("返回健康检查数据:", healthData);
@@ -150,9 +163,15 @@ app.post("/api/openai/chat", async (req, res) => {
       return res.status(400).json({ error: "API密钥未提供" });
     }
 
-    const axiosInstance = createAxiosInstance(AI_SERVICES.openai.baseURL, {
-      Authorization: `Bearer ${apiKey}`,
-    });
+    // === MODIFICATION START: 传入服务商名称 ===
+    const axiosInstance = createAxiosInstance(
+      "openai",
+      AI_SERVICES.openai.baseURL,
+      {
+        Authorization: `Bearer ${apiKey}`,
+      }
+    );
+    // === MODIFICATION END ===
 
     const payload = {
       model: model || AI_SERVICES.openai.defaultModel,
@@ -221,9 +240,15 @@ app.post("/api/zhipu/chat", async (req, res) => {
       return res.status(400).json({ error: "API密钥未提供" });
     }
 
-    const axiosInstance = createAxiosInstance(AI_SERVICES.zhipu.baseURL, {
-      Authorization: `Bearer ${apiKey}`,
-    });
+    // === MODIFICATION START: 传入服务商名称 ===
+    const axiosInstance = createAxiosInstance(
+      "zhipu",
+      AI_SERVICES.zhipu.baseURL,
+      {
+        Authorization: `Bearer ${apiKey}`,
+      }
+    );
+    // === MODIFICATION END ===
 
     const payload = {
       model: model || AI_SERVICES.zhipu.defaultModel,
@@ -271,10 +296,16 @@ app.post("/api/anthropic/chat", async (req, res) => {
       return res.status(400).json({ error: "API密钥未提供" });
     }
 
-    const axiosInstance = createAxiosInstance(AI_SERVICES.anthropic.baseURL, {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    });
+    // === MODIFICATION START: 传入服务商名称 ===
+    const axiosInstance = createAxiosInstance(
+      "anthropic",
+      AI_SERVICES.anthropic.baseURL,
+      {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      }
+    );
+    // === MODIFICATION END ===
 
     // 转换消息格式
     const systemMessage = messages.find((m) => m.role === "system");
@@ -321,56 +352,53 @@ app.post("/api/anthropic/chat", async (req, res) => {
 app.post("/api/qwen/chat", async (req, res) => {
   try {
     const { messages, model, stream = true, apiKey, ...otherParams } = req.body;
-
     if (!apiKey) {
       return res.status(400).json({ error: "API密钥未提供" });
     }
-
-    const axiosInstance = createAxiosInstance(AI_SERVICES.qwen.baseURL, {
-      Authorization: `Bearer ${apiKey}`,
-      "X-DashScope-SSE": "enable",
-    });
+    console.log("收到通义千问AI聊天请求", AI_SERVICES.qwen.baseURL);
+    const axiosInstance = createAxiosInstance(
+      "qwen",
+      AI_SERVICES.qwen.baseURL,
+      {
+        Authorization: `Bearer ${apiKey}`,
+        ...(stream && { Accept: "text/event-stream" }),
+      }
+    );
 
     const payload = {
       model: model || AI_SERVICES.qwen.defaultModel,
-      input: { messages },
-      parameters: {
-        temperature: 0.7,
-        max_tokens: 2000,
-        incremental_output: stream,
-        ...otherParams,
-      },
+      messages,
+      temperature: otherParams.temperature ?? 0.7,
+      stream,
+      ...otherParams,
     };
 
-    if (stream) {
-      const response = await axiosInstance.post(
-        "/services/aigc/text-generation/generation",
-        payload,
-        {
-          responseType: "stream",
-        }
-      );
+    // 关键修正 #2: 使用兼容模式的相对路径 /chat/completions
+    const endpoint = "/chat/completions";
+    console.log("stream:", stream);
 
+    if (stream) {
+      const upstream = await axiosInstance.post(endpoint, payload, {
+        responseType: "stream",
+      });
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
-
-      response.data.pipe(res);
+      console.log("通义千问AI流式响应开始", res);
+      upstream.data.pipe(res);
     } else {
-      const response = await axiosInstance.post(
-        "/services/aigc/text-generation/generation",
-        payload
-      );
-      res.json(response.data);
+      const { data } = await axiosInstance.post(endpoint, payload);
+      res.json(data);
     }
-  } catch (error) {
-    console.error("通义千问错误:", error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({
-      error:
-        error.response?.data?.error?.message ||
-        error.message ||
-        "通义千问调用失败",
-    });
+  } catch (err) {
+    console.error("[qwen] 调用失败:", err.response?.data || err.message);
+    const status = err.response?.status || 500;
+    const msg =
+      err.response?.data?.error?.message || // 兼容模式会返回 error.message
+      err.response?.data?.message || // 原生模式可能返回 message
+      err.message ||
+      "通义千问调用失败";
+    if (!res.headersSent) res.status(status).json({ error: msg });
   }
 });
 
@@ -388,7 +416,12 @@ app.post("/api/gemini/chat", async (req, res) => {
       ? `/models/${modelName}:streamGenerateContent?key=${apiKey}`
       : `/models/${modelName}:generateContent?key=${apiKey}`;
 
-    const axiosInstance = createAxiosInstance(AI_SERVICES.gemini.baseURL);
+    // === MODIFICATION START: 传入服务商名称 ===
+    const axiosInstance = createAxiosInstance(
+      "gemini",
+      AI_SERVICES.gemini.baseURL
+    );
+    // === MODIFICATION END ===
 
     // 转换消息格式
     const systemMessage = messages.find((m) => m.role === "system");
@@ -440,55 +473,104 @@ app.post("/api/gemini/chat", async (req, res) => {
 // ============= 配置测试 (增强版) =============
 app.post("/api/test", async (req, res) => {
   console.log("收到API测试请求");
-
   try {
     const { provider, apiKey } = req.body;
-
     if (!provider || !apiKey) {
-      return res.status(400).json({ error: "缺少必要参数" });
+      return res.status(400).json({ error: "缺少服务商或API Key" });
     }
-
-    console.log(`测试${provider}连接...`);
+    console.log(`测试 ${provider} 连接...`);
 
     let testResult = false;
     let errorMessage = "";
+    let axiosInstance;
 
     switch (provider) {
       case "openai":
+        axiosInstance = createAxiosInstance(
+          "openai",
+          AI_SERVICES.openai.baseURL,
+          {
+            Authorization: `Bearer ${apiKey}`,
+          }
+        );
         try {
-          const axiosInstance = createAxiosInstance(
-            AI_SERVICES.openai.baseURL,
-            {
-              Authorization: `Bearer ${apiKey}`,
-            }
-          );
-          await axiosInstance.get("/models", { timeout: 10000 });
+          await axiosInstance.get("/models");
           testResult = true;
-        } catch (error) {
-          errorMessage = error.response?.data?.error?.message || error.message;
-          console.log("OpenAI测试失败:", errorMessage);
+        } catch (e) {
+          errorMessage = e.response?.data?.error?.message || e.message;
         }
         break;
 
       case "zhipu":
-        try {
-          const axiosInstance = createAxiosInstance(AI_SERVICES.zhipu.baseURL, {
+        axiosInstance = createAxiosInstance(
+          "zhipu",
+          AI_SERVICES.zhipu.baseURL,
+          {
             Authorization: `Bearer ${apiKey}`,
+          }
+        );
+        try {
+          await axiosInstance.post("/chat/completions", {
+            model: "glm-3-turbo",
+            messages: [{ role: "user", content: "Hi" }],
+            max_tokens: 1,
           });
-          await axiosInstance.post(
-            "/chat/completions",
-            {
-              model: "glm-4",
-              messages: [{ role: "user", content: "hi" }],
-              max_tokens: 10,
-              stream: false,
-            },
-            { timeout: 10000 }
-          );
           testResult = true;
-        } catch (error) {
-          errorMessage = error.response?.data?.error?.message || error.message;
-          console.log("智谱AI测试失败:", errorMessage);
+        } catch (e) {
+          errorMessage = e.response?.data?.error?.message || e.message;
+        }
+        break;
+
+      case "anthropic":
+        axiosInstance = createAxiosInstance(
+          "anthropic",
+          AI_SERVICES.anthropic.baseURL,
+          {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          }
+        );
+        try {
+          await axiosInstance.post("/messages", {
+            model: AI_SERVICES.anthropic.defaultModel,
+            messages: [{ role: "user", content: "Hi" }],
+            max_tokens: 10,
+          });
+          testResult = true;
+        } catch (e) {
+          errorMessage = e.response?.data?.error?.message || e.message;
+        }
+        break;
+
+      case "qwen":
+        axiosInstance = createAxiosInstance("qwen", AI_SERVICES.qwen.baseURL, {
+          Authorization: `Bearer ${apiKey}`,
+        });
+        try {
+          await axiosInstance.post("/chat/completions", {
+            model: AI_SERVICES.qwen.defaultModel,
+            messages: [{ role: "user", content: "Hi" }],
+            max_tokens: 2,
+          });
+          testResult = true;
+        } catch (e) {
+          errorMessage = e.response?.data?.error?.message || e.message;
+        }
+        break;
+
+      case "gemini":
+        try {
+          const endpoint = `/models/gemini-pro:generateContent?key=${apiKey}`;
+          axiosInstance = createAxiosInstance(
+            "gemini",
+            AI_SERVICES.gemini.baseURL
+          );
+          await axiosInstance.post(endpoint, {
+            contents: [{ parts: [{ text: "Hi" }] }],
+          });
+          testResult = true;
+        } catch (e) {
+          errorMessage = e.response?.data?.error?.message || e.message;
         }
         break;
 
@@ -497,26 +579,25 @@ app.post("/api/test", async (req, res) => {
     }
 
     if (testResult) {
-      console.log(`${provider} API测试成功`);
       res.json({ success: true, message: "API连接测试成功" });
     } else {
-      console.log(`${provider} API测试失败:`, errorMessage);
-      res.status(400).json({ success: false, message: errorMessage });
+      res
+        .status(400)
+        .json({ success: false, message: `连接失败: ${errorMessage}` });
     }
   } catch (error) {
-    console.error("测试过程出错:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
 // 全局错误处理中间件
 app.use((error, req, res, next) => {
+  // <-- Correct: 4 arguments now
   console.error("服务器错误:", error);
   if (!res.headersSent) {
     res.status(500).json({ error: "服务器内部错误", details: error.message });
   }
 });
-
 // 404处理
 app.use("*", (req, res) => {
   console.log(`404 - 未找到路径: ${req.method} ${req.originalUrl}`);
@@ -544,7 +625,15 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(
     `📡 前端地址: ${process.env.FRONTEND_URL || "http://localhost:3000"}`
   );
-  console.log(`🌐 代理状态: ${PROXY_URL ? `已启用 (${PROXY_URL})` : "未启用"}`);
+  // === MODIFICATION START: 更新代理状态日志 ===
+  console.log(
+    `🌐 代理配置: ${
+      PROXY_URL
+        ? `已启用 (${PROXY_URL})，将用于 openai, anthropic, gemini`
+        : "未启用"
+    }`
+  );
+  // === MODIFICATION END ===
   console.log(`🔗 健康检查: http://localhost:${PORT}/api/health`);
   console.log(`📋 可用服务: ${Object.keys(AI_SERVICES).join(", ")}`);
   console.log("=================================");
