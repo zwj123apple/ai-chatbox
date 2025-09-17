@@ -1,5 +1,5 @@
-// ============= src/components/chat/StreamingMessageBubble.jsx (Complete Enhanced Version) =============
-import React, { useState, useEffect } from "react";
+// ============= src/components/chat/StreamingMessageBubble.jsx (流式显示优化版本) =============
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   User,
   Bot,
@@ -22,40 +22,97 @@ export default function StreamingMessageBubble({
   onFeedback,
   onShare,
   onBookmark,
+  isBookmarked: initialBookmarked = false,
+  streamingSpeed = 20, // 每秒显示字符数，可调节
 }) {
   const [copiedId, setCopiedId] = useState(null);
   const [displayText, setDisplayText] = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [feedback, setFeedback] = useState(null);
-  const [isBookmarked, setIsBookmarked] = useState(false);
+  const [isBookmarked, setIsBookmarked] = useState(initialBookmarked);
   const [showActions, setShowActions] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
+  const messageEndRef = useRef(null);
+
+  // 简单的状态管理
+  const intervalRef = useRef(null);
+  const targetTextRef = useRef("");
+  const currentIndexRef = useRef(0);
 
   const isUser = message.type === "user";
   const content = message.content || "";
 
-  // 流式显示效果
+  // 超简单的流式逻辑
   useEffect(() => {
-    if (isStreaming && !isUser && content) {
-      setDisplayText("");
-      setCurrentIndex(0);
-
-      const timer = setInterval(() => {
-        setCurrentIndex((prev) => {
-          if (prev >= content.length) {
-            clearInterval(timer);
-            return prev;
-          }
-          setDisplayText(content.slice(0, prev + 1));
-          return prev + 1;
-        });
-      }, 15); // 更快的打字速度
-
-      return () => clearInterval(timer);
-    } else {
-      setDisplayText(content);
+    // 清理之前的定时器
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
-  }, [content, isStreaming, isUser]);
+
+    if (isUser) {
+      // 用户消息直接显示
+      setDisplayText(content);
+      setIsTyping(false);
+      return;
+    }
+
+    // 更新目标文本
+    targetTextRef.current = content;
+
+    if (!content) {
+      setDisplayText("");
+      setIsTyping(false);
+      currentIndexRef.current = 0;
+      return;
+    }
+
+    // 如果目标内容比当前显示的长，继续打字
+    if (content.length > displayText.length) {
+      setIsTyping(true);
+      currentIndexRef.current = displayText.length;
+
+      intervalRef.current = setInterval(() => {
+        const targetText = targetTextRef.current;
+        const currentIndex = currentIndexRef.current;
+
+        if (currentIndex >= targetText.length) {
+          // 打字完成
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          setIsTyping(false);
+          setDisplayText(targetText);
+          return;
+        }
+
+        // 显示下一个字符
+        currentIndexRef.current = currentIndex + 1;
+        setDisplayText(targetText.substring(0, currentIndex + 1));
+
+        // 滚动到底部
+        setTimeout(() => {
+          messageEndRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+          });
+        }, 10);
+      }, 1000 / streamingSpeed);
+    } else {
+      // 直接显示内容
+      setDisplayText(content);
+      setIsTyping(false);
+      currentIndexRef.current = content.length;
+    }
+
+    // 清理函数
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [content, isUser, streamingSpeed, displayText.length]);
 
   // 复制功能
   const handleCopy = async (text, id) => {
@@ -244,6 +301,9 @@ export default function StreamingMessageBubble({
     links: (displayText.match(/\[([^\]]+)\]\([^)]+\)/g) || []).length,
   };
 
+  // 检查是否正在显示流式效果
+  const showStreamingIndicator = isStreaming || isTyping;
+
   return (
     <div
       className={`flex items-start gap-4 mb-6 group ${
@@ -265,7 +325,7 @@ export default function StreamingMessageBubble({
         {isUser ? <User size={16} /> : <Bot size={16} />}
 
         {/* 流式状态指示器 */}
-        {isStreaming && !isUser && (
+        {showStreamingIndicator && !isUser && (
           <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse border-2 border-white"></div>
         )}
       </div>
@@ -273,7 +333,7 @@ export default function StreamingMessageBubble({
       <div className={`max-w-[85%] min-w-0 ${isUser ? "text-right" : ""}`}>
         {/* 消息内容 */}
         <div
-          className={`relative inline-block p-4 rounded-2xl ${
+          className={`relative inline-block p-4 rounded-2xl transition-all duration-200 ${
             isUser
               ? darkMode
                 ? "bg-blue-600 text-white"
@@ -301,7 +361,7 @@ export default function StreamingMessageBubble({
             )}
 
             {/* 流式输出时的光标 */}
-            {isStreaming && !isUser && currentIndex < content.length && (
+            {showStreamingIndicator && !isUser && (
               <span
                 className={`inline-block w-0.5 h-5 ml-1 animate-pulse ${
                   darkMode ? "bg-green-400" : "bg-green-600"
@@ -310,8 +370,8 @@ export default function StreamingMessageBubble({
             )}
           </div>
 
-          {/* 快速复制按钮 */}
-          {!isUser && displayText && (
+          {/* 快速复制按钮 - 只有在有内容且不在流式显示时才显示 */}
+          {!isUser && displayText && !showStreamingIndicator && (
             <button
               onClick={() => handleCopy(displayText, message.id)}
               className={`absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded ${
@@ -341,7 +401,7 @@ export default function StreamingMessageBubble({
             {message.timestamp ? message.timestamp.toLocaleString() : ""}
           </span>
 
-          {/* AI消息统计 */}
+          {/* AI消息统计 - 只有在有内容时才显示 */}
           {!isUser && displayText && (
             <>
               <span>•</span>
@@ -366,7 +426,7 @@ export default function StreamingMessageBubble({
           )}
 
           {/* 流式状态 */}
-          {isStreaming && !isUser && (
+          {showStreamingIndicator && !isUser && (
             <>
               <span>•</span>
               <div className="flex items-center gap-1">
@@ -380,7 +440,7 @@ export default function StreamingMessageBubble({
                     darkMode ? "text-green-400" : "text-green-500"
                   }`}
                 >
-                  生成中...
+                  {isTyping ? "显示中..." : "生成中..."}
                 </span>
               </div>
             </>
@@ -398,8 +458,8 @@ export default function StreamingMessageBubble({
           )}
         </div>
 
-        {/* 消息操作按钮 */}
-        {!isUser && displayText && !isStreaming && (
+        {/* 消息操作按钮 - 只有在流式完成且有内容时才显示 */}
+        {!isUser && displayText && !showStreamingIndicator && (
           <div
             className={`flex items-center gap-1 mt-3 opacity-0 group-hover:opacity-100 transition-opacity ${
               isUser ? "justify-end" : ""
@@ -498,6 +558,9 @@ export default function StreamingMessageBubble({
             />
           </div>
         )}
+
+        {/* 滚动锚点 */}
+        <div ref={messageEndRef} />
       </div>
     </div>
   );
