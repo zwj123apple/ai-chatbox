@@ -27,92 +27,90 @@ export default function StreamingMessageBubble({
 }) {
   const [copiedId, setCopiedId] = useState(null);
   const [displayText, setDisplayText] = useState("");
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [feedback, setFeedback] = useState(null);
   const [isBookmarked, setIsBookmarked] = useState(initialBookmarked);
   const [showActions, setShowActions] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const messageEndRef = useRef(null);
 
   // 简单的状态管理
   const intervalRef = useRef(null);
-  const targetTextRef = useRef("");
-  const currentIndexRef = useRef(0);
+  const displayTextRef = useRef("");
 
   const isUser = message.type === "user";
   const content = message.content || "";
 
-  // 超简单的流式逻辑
   useEffect(() => {
-    // 清理之前的定时器
+    if (isUser) {
+      setDisplayText(content);
+      setIsTyping(false);
+      return;
+    }
+
+    // 清理旧定时器
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
 
-    if (isUser) {
-      // 用户消息直接显示
-      setDisplayText(content);
-      setIsTyping(false);
-      return;
-    }
+    setIsTyping(true);
 
-    // 更新目标文本
-    targetTextRef.current = content;
+    // --- 计算延迟时间 ---
+    const now = Date.now();
+    const serverTime = message.startTime || now;
+    const responseTime = now - serverTime;
+    const displayDelay = Math.max(300, responseTime);
 
-    if (!content) {
-      setDisplayText("");
-      setIsTyping(false);
-      currentIndexRef.current = 0;
-      return;
-    }
+    // --- 正在生成动画 ---
+    const dots = ["", ".", "..", "..."];
+    const steps = dots.length;
+    const intervalTime = displayDelay / steps;
+    let dotsIndex = 0;
 
-    // 如果目标内容比当前显示的长，继续打字
-    if (content.length > displayText.length) {
-      setIsTyping(true);
-      currentIndexRef.current = displayText.length;
+    setDisplayText(`正在生成${dots[dotsIndex]}`); // 立即显示第一帧
+
+    const dotsInterval = setInterval(() => {
+      dotsIndex = (dotsIndex + 1) % steps;
+      setDisplayText(`正在生成${dots[dotsIndex]}`);
+    }, intervalTime);
+
+    // --- 延迟 displayDelay 后开始打字机 ---
+    const typingTimeout = setTimeout(() => {
+      clearInterval(dotsInterval); // 停止动画
+
+      // --- 打字机逐字显示 ---
+      const target = content;
+      let current = "";
+      displayTextRef.current = "";
 
       intervalRef.current = setInterval(() => {
-        const targetText = targetTextRef.current;
-        const currentIndex = currentIndexRef.current;
+        if (current.length < target.length) {
+          const nextChar = target[current.length];
+          current += nextChar;
+          displayTextRef.current = current;
+          setDisplayText(current);
 
-        if (currentIndex >= targetText.length) {
-          // 打字完成
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-          setIsTyping(false);
-          setDisplayText(targetText);
-          return;
-        }
-
-        // 显示下一个字符
-        currentIndexRef.current = currentIndex + 1;
-        setDisplayText(targetText.substring(0, currentIndex + 1));
-
-        // 滚动到底部
-        setTimeout(() => {
           messageEndRef.current?.scrollIntoView({
             behavior: "smooth",
             block: "nearest",
           });
-        }, 10);
+        } else {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          setIsTyping(false);
+        }
       }, 1000 / streamingSpeed);
-    } else {
-      // 直接显示内容
-      setDisplayText(content);
-      setIsTyping(false);
-      currentIndexRef.current = content.length;
-    }
+    }, displayDelay);
 
-    // 清理函数
     return () => {
+      clearTimeout(typingTimeout);
+      clearInterval(dotsInterval);
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
-  }, [content, isUser, streamingSpeed, displayText.length]);
+  }, [content, isUser, streamingSpeed, message.startTime]);
 
   // 复制功能
   const handleCopy = async (text, id) => {
