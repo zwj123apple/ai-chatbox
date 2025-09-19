@@ -1,5 +1,4 @@
-// ============= src/components/chat/EnhancedMessageRenderer.jsx (Fixed) =============
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import {
@@ -10,17 +9,66 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { Copy, Check, Download, ExternalLink, Eye, EyeOff } from "lucide-react";
+import remarkBreaks from "remark-breaks";
+import {
+  Copy,
+  Check,
+  Download,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  Info,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 import "katex/dist/katex.min.css";
 
-// 代码块组件
+// 错误边界组件
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Markdown rendering error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 border border-red-300 bg-red-50 text-red-700 rounded-lg">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertCircle size={16} />
+            <span className="font-medium">渲染错误</span>
+          </div>
+          <pre className="text-sm whitespace-pre-wrap overflow-x-auto">
+            {this.props.fallbackContent || "内容渲染失败"}
+          </pre>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// 代码块组件 - 增强版
 const CodeBlock = ({ children, className, darkMode, ...props }) => {
   const [copied, setCopied] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   const match = /language-(\w+)/.exec(className || "");
   const language = match ? match[1] : "";
   const code = String(children).replace(/\n$/, "");
+  const lines = code.split("\n");
+  const shouldCollapse = lines.length > 20;
 
   const handleCopy = async () => {
     try {
@@ -33,16 +81,24 @@ const CodeBlock = ({ children, className, darkMode, ...props }) => {
   };
 
   const handleDownload = () => {
-    const blob = new Blob([code], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `code.${language || "txt"}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const blob = new Blob([code], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `code.${language || "txt"}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("下载失败:", err);
+    }
   };
+
+  const displayCode = collapsed
+    ? lines.slice(0, 10).join("\n") + "\n..."
+    : code;
 
   return (
     <div
@@ -72,11 +128,36 @@ const CodeBlock = ({ children, className, darkMode, ...props }) => {
                 : "bg-gray-200 text-gray-500"
             }`}
           >
-            {code.split("\n").length} 行
+            {lines.length} 行
           </span>
+          {code.length > 1000 && (
+            <span
+              className={`text-xs px-2 py-1 rounded ${
+                darkMode
+                  ? "bg-blue-700 text-blue-300"
+                  : "bg-blue-200 text-blue-600"
+              }`}
+            >
+              {(code.length / 1024).toFixed(1)}KB
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
+          {shouldCollapse && (
+            <button
+              onClick={() => setCollapsed(!collapsed)}
+              className={`p-1 rounded transition-colors text-xs px-2 ${
+                darkMode
+                  ? "hover:bg-gray-700 text-gray-400 hover:text-white"
+                  : "hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+              }`}
+              title={collapsed ? "展开" : "收起"}
+            >
+              {collapsed ? "展开" : "收起"}
+            </button>
+          )}
+
           <button
             onClick={() => setShowRaw(!showRaw)}
             className={`p-1 rounded transition-colors ${
@@ -127,7 +208,7 @@ const CodeBlock = ({ children, className, darkMode, ...props }) => {
                 : "text-gray-800 bg-gray-50"
             }`}
           >
-            {code}
+            {displayCode}
           </pre>
         ) : (
           <SyntaxHighlighter
@@ -150,7 +231,7 @@ const CodeBlock = ({ children, className, darkMode, ...props }) => {
               marginRight: "1em",
             }}
           >
-            {code}
+            {displayCode}
           </SyntaxHighlighter>
         )}
       </div>
@@ -172,21 +253,84 @@ const InlineCode = ({ children, darkMode }) => (
 );
 
 // 链接组件
-const Link = ({ href, children, darkMode }) => (
-  <a
-    href={href}
-    target="_blank"
-    rel="noopener noreferrer"
-    className={`inline-flex items-center gap-1 ${
-      darkMode
-        ? "text-blue-400 hover:text-blue-300"
-        : "text-blue-600 hover:text-blue-500"
-    } underline transition-colors`}
-  >
-    {children}
-    <ExternalLink size={12} />
-  </a>
-);
+const Link = ({ href, children, darkMode }) => {
+  const isInternal = href?.startsWith("#") || href?.startsWith("/");
+
+  return (
+    <a
+      href={href}
+      target={isInternal ? "_self" : "_blank"}
+      rel={isInternal ? "" : "noopener noreferrer"}
+      className={`inline-flex items-center gap-1 ${
+        darkMode
+          ? "text-blue-400 hover:text-blue-300"
+          : "text-blue-600 hover:text-blue-500"
+      } underline transition-colors break-words`}
+    >
+      {children}
+      {!isInternal && <ExternalLink size={12} />}
+    </a>
+  );
+};
+
+// 图片组件
+const Image = ({ src, alt, darkMode }) => {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  return (
+    <div className="my-4">
+      <div
+        className={`rounded-lg overflow-hidden border ${
+          darkMode ? "border-gray-700" : "border-gray-200"
+        }`}
+      >
+        {loading && (
+          <div
+            className={`animate-pulse h-48 ${
+              darkMode ? "bg-gray-800" : "bg-gray-200"
+            } flex items-center justify-center`}
+          >
+            <span className={darkMode ? "text-gray-400" : "text-gray-500"}>
+              加载中...
+            </span>
+          </div>
+        )}
+        {error ? (
+          <div
+            className={`h-48 ${
+              darkMode
+                ? "bg-gray-800 text-gray-400"
+                : "bg-gray-200 text-gray-500"
+            } flex items-center justify-center`}
+          >
+            <span>图片加载失败</span>
+          </div>
+        ) : (
+          <img
+            src={src}
+            alt={alt || "图片"}
+            className={`max-w-full h-auto ${loading ? "hidden" : "block"}`}
+            onLoad={() => setLoading(false)}
+            onError={() => {
+              setLoading(false);
+              setError(true);
+            }}
+          />
+        )}
+      </div>
+      {alt && !error && (
+        <p
+          className={`text-center text-sm mt-2 italic ${
+            darkMode ? "text-gray-400" : "text-gray-600"
+          }`}
+        >
+          {alt}
+        </p>
+      )}
+    </div>
+  );
+};
 
 // 表格组件
 const Table = ({ children, darkMode }) => (
@@ -209,17 +353,28 @@ const TableHead = ({ children, darkMode }) => (
 
 const TableRow = ({ children, darkMode }) => (
   <tr
-    className={`border-b ${darkMode ? "border-gray-700" : "border-gray-200"}`}
+    className={`border-b ${
+      darkMode
+        ? "border-gray-700 hover:bg-gray-750"
+        : "border-gray-200 hover:bg-gray-50"
+    } transition-colors`}
   >
     {children}
   </tr>
 );
 
-const TableCell = ({ children, darkMode, isHeader }) => {
+const TableCell = ({ children, darkMode, isHeader, align = "left" }) => {
   const Tag = isHeader ? "th" : "td";
+  const alignClass =
+    {
+      left: "text-left",
+      center: "text-center",
+      right: "text-right",
+    }[align] || "text-left";
+
   return (
     <Tag
-      className={`px-4 py-2 text-left ${
+      className={`px-4 py-2 ${alignClass} ${
         isHeader
           ? darkMode
             ? "font-semibold text-gray-200"
@@ -248,7 +403,7 @@ const Blockquote = ({ children, darkMode }) => (
 );
 
 // 列表组件
-const List = ({ children, ordered, darkMode }) => {
+const List = ({ children, ordered, darkMode, start }) => {
   const Tag = ordered ? "ol" : "ul";
   return (
     <Tag
@@ -257,6 +412,7 @@ const List = ({ children, ordered, darkMode }) => {
       } ${darkMode ? "text-gray-300" : "text-gray-700"} ${
         darkMode ? "marker:text-gray-500" : "marker:text-gray-400"
       }`}
+      start={start}
     >
       {children}
     </Tag>
@@ -275,9 +431,19 @@ const Heading = ({ level, children, darkMode }) => {
     6: "text-sm font-bold mb-2 mt-3",
   };
 
+  // 生成锚点ID
+  const id =
+    typeof children === "string"
+      ? children
+          .toLowerCase()
+          .replace(/\s+/g, "-")
+          .replace(/[^\w-]/g, "")
+      : "";
+
   return React.createElement(
     Tag,
     {
+      id,
       className: `${sizes[level]} ${
         darkMode ? "text-gray-100" : "text-gray-800"
       } border-b ${
@@ -286,7 +452,7 @@ const Heading = ({ level, children, darkMode }) => {
             ? "border-gray-600"
             : "border-gray-300"
           : "border-transparent"
-      } pb-2`,
+      } pb-2 scroll-mt-16`,
     },
     children
   );
@@ -307,7 +473,7 @@ const TaskListItem = ({ children, checked, darkMode }) => (
     className={`flex items-start gap-2 my-1 ${
       darkMode ? "text-gray-300" : "text-gray-700"
     }`}
-    style={{ listStyle: "none" }}
+    style={{ listStyle: "none", marginLeft: "-1.5rem" }}
   >
     <input
       type="checkbox"
@@ -315,15 +481,95 @@ const TaskListItem = ({ children, checked, darkMode }) => (
       readOnly
       className={`mt-1 rounded ${
         darkMode ? "bg-gray-700 border-gray-600" : "bg-white border-gray-300"
-      }`}
+      } cursor-default`}
     />
     <span className={checked ? "line-through opacity-75" : ""}>{children}</span>
   </li>
 );
 
+// 警告框组件
+const Alert = ({ type = "info", children, darkMode }) => {
+  const styles = {
+    info: {
+      bg: darkMode
+        ? "bg-blue-900 border-blue-700"
+        : "bg-blue-50 border-blue-200",
+      text: darkMode ? "text-blue-300" : "text-blue-700",
+      icon: <Info size={16} />,
+    },
+    warning: {
+      bg: darkMode
+        ? "bg-yellow-900 border-yellow-700"
+        : "bg-yellow-50 border-yellow-200",
+      text: darkMode ? "text-yellow-300" : "text-yellow-700",
+      icon: <AlertCircle size={16} />,
+    },
+    success: {
+      bg: darkMode
+        ? "bg-green-900 border-green-700"
+        : "bg-green-50 border-green-200",
+      text: darkMode ? "text-green-300" : "text-green-700",
+      icon: <CheckCircle size={16} />,
+    },
+    error: {
+      bg: darkMode ? "bg-red-900 border-red-700" : "bg-red-50 border-red-200",
+      text: darkMode ? "text-red-300" : "text-red-700",
+      icon: <XCircle size={16} />,
+    },
+  };
+
+  const style = styles[type] || styles.info;
+
+  return (
+    <div className={`my-4 p-4 border rounded-lg ${style.bg} ${style.text}`}>
+      <div className="flex items-start gap-2">
+        {style.icon}
+        <div className="flex-1">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+// 键盘按键组件
+const Kbd = ({ children, darkMode }) => (
+  <kbd
+    className={`px-2 py-1 text-sm font-mono rounded border ${
+      darkMode
+        ? "bg-gray-800 border-gray-600 text-gray-300"
+        : "bg-gray-100 border-gray-300 text-gray-700"
+    } shadow-sm`}
+  >
+    {children}
+  </kbd>
+);
+
 // 主要的消息渲染器组件
 const EnhancedMessageRenderer = ({ content, darkMode }) => {
-  if (!content) return null;
+  // 内容预处理
+  const processedContent = useMemo(() => {
+    if (!content) return "";
+
+    // 处理特殊的markdown语法
+    let processed = content;
+
+    // 处理警告框语法 :::warning 等
+    processed = processed.replace(
+      /:::(\w+)\s*\n([\s\S]*?)\n:::/g,
+      (match, type, content) => {
+        return `<div class="alert alert-${type}">\n\n${content.trim()}\n\n</div>`;
+      }
+    );
+
+    // 处理键盘按键 [[Ctrl+C]]
+    processed = processed.replace(
+      /\[\[([^\]]+)\]\]/g,
+      (match, key) => `<kbd>${key}</kbd>`
+    );
+
+    return processed;
+  }, [content]);
+
+  if (!processedContent) return null;
 
   // 自定义组件映射
   const components = {
@@ -348,7 +594,12 @@ const EnhancedMessageRenderer = ({ content, darkMode }) => {
       );
     },
 
-    // 表格
+    // 图片
+    img({ src, alt }) {
+      return <Image src={src} alt={alt} darkMode={darkMode} />;
+    },
+
+    // 表格相关
     table({ children }) {
       return <Table darkMode={darkMode}>{children}</Table>;
     },
@@ -361,15 +612,19 @@ const EnhancedMessageRenderer = ({ content, darkMode }) => {
     tr({ children }) {
       return <TableRow darkMode={darkMode}>{children}</TableRow>;
     },
-    th({ children }) {
+    th({ children, align }) {
       return (
-        <TableCell darkMode={darkMode} isHeader>
+        <TableCell darkMode={darkMode} isHeader align={align}>
           {children}
         </TableCell>
       );
     },
-    td({ children }) {
-      return <TableCell darkMode={darkMode}>{children}</TableCell>;
+    td({ children, align }) {
+      return (
+        <TableCell darkMode={darkMode} align={align}>
+          {children}
+        </TableCell>
+      );
     },
 
     // 引用块
@@ -381,9 +636,9 @@ const EnhancedMessageRenderer = ({ content, darkMode }) => {
     ul({ children }) {
       return <List darkMode={darkMode}>{children}</List>;
     },
-    ol({ children }) {
+    ol({ children, start }) {
       return (
-        <List ordered darkMode={darkMode}>
+        <List ordered darkMode={darkMode} start={start}>
           {children}
         </List>
       );
@@ -438,8 +693,60 @@ const EnhancedMessageRenderer = ({ content, darkMode }) => {
       return <HorizontalRule darkMode={darkMode} />;
     },
 
-    // 段落
-    p({ children }) {
+    // 段落 - 修复嵌套问题
+    p({ children, node }) {
+      // 检查是否包含块级元素
+      const hasBlockElements = React.Children.toArray(children).some(
+        (child) => {
+          if (React.isValidElement(child)) {
+            const type = child.type;
+            // 检查原生块级元素
+            if (typeof type === "string") {
+              return [
+                "div",
+                "table",
+                "ul",
+                "ol",
+                "blockquote",
+                "pre",
+                "hr",
+                "form",
+              ].includes(type);
+            }
+            // 检查自定义组件
+            if (typeof type === "function") {
+              const name = type.name || type.displayName || "";
+              return ["CodeBlock", "Table", "List", "Alert"].includes(name);
+            }
+          }
+          return false;
+        }
+      );
+
+      // 检查节点类型
+      const hasBlockChild = node?.children?.some((child) => {
+        return (
+          child.type === "element" &&
+          ["div", "table", "ul", "ol", "blockquote", "pre", "hr"].includes(
+            child.tagName
+          )
+        );
+      });
+
+      // 如果包含块级元素，使用div
+      if (hasBlockElements || hasBlockChild) {
+        return (
+          <div
+            className={`my-3 leading-relaxed ${
+              darkMode ? "text-gray-300" : "text-gray-700"
+            }`}
+          >
+            {children}
+          </div>
+        );
+      }
+
+      // 否则使用p标签
       return (
         <p
           className={`my-3 leading-relaxed ${
@@ -474,13 +781,41 @@ const EnhancedMessageRenderer = ({ content, darkMode }) => {
       return <del className="line-through opacity-75">{children}</del>;
     },
 
+    // 上标
+    sup({ children }) {
+      return <sup className="text-xs">{children}</sup>;
+    },
+
+    // 下标
+    sub({ children }) {
+      return <sub className="text-xs">{children}</sub>;
+    },
+
+    // 标记/高亮
+    mark({ children }) {
+      return (
+        <mark
+          className={`px-1 rounded ${
+            darkMode
+              ? "bg-yellow-700 text-yellow-100"
+              : "bg-yellow-200 text-yellow-800"
+          }`}
+        >
+          {children}
+        </mark>
+      );
+    },
+
     // 任务列表项
     li({ children, className }) {
       // 检查是否是任务列表项
       if (className && className.includes("task-list-item")) {
         // 查找checkbox的checked状态
         const checkbox = React.Children.toArray(children).find(
-          (child) => child.type === "input" && child.props.type === "checkbox"
+          (child) =>
+            React.isValidElement(child) &&
+            child.type === "input" &&
+            child.props.type === "checkbox"
         );
         const checked = checkbox ? checkbox.props.checked : false;
 
@@ -496,22 +831,87 @@ const EnhancedMessageRenderer = ({ content, darkMode }) => {
         </li>
       );
     },
+
+    // 自定义div处理 - 用于警告框等
+    div({ className, children }) {
+      if (className?.includes("alert")) {
+        const type =
+          className
+            .split(" ")
+            .find((c) => c.startsWith("alert-"))
+            ?.replace("alert-", "") || "info";
+        return (
+          <Alert type={type} darkMode={darkMode}>
+            {children}
+          </Alert>
+        );
+      }
+      return <div className={className}>{children}</div>;
+    },
+
+    // 键盘按键
+    kbd({ children }) {
+      return <Kbd darkMode={darkMode}>{children}</Kbd>;
+    },
+
+    // 详情/摘要元素
+    details({ children }) {
+      return (
+        <details
+          className={`my-4 p-4 border rounded-lg ${
+            darkMode
+              ? "border-gray-600 bg-gray-800"
+              : "border-gray-200 bg-gray-50"
+          }`}
+        >
+          {children}
+        </details>
+      );
+    },
+
+    summary({ children }) {
+      return (
+        <summary
+          className={`cursor-pointer font-medium ${
+            darkMode
+              ? "text-gray-200 hover:text-gray-100"
+              : "text-gray-700 hover:text-gray-800"
+          } transition-colors`}
+        >
+          {children}
+        </summary>
+      );
+    },
   };
 
   return (
-    <div
-      className={`enhanced-message-renderer prose prose-sm max-w-none ${
-        darkMode ? "prose-invert" : ""
-      }`}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex, rehypeRaw]}
-        components={components}
+    <ErrorBoundary fallbackContent={content}>
+      <div
+        className={`enhanced-message-renderer prose prose-sm max-w-none ${
+          darkMode ? "prose-invert" : ""
+        }`}
+        style={{
+          // 确保数学公式正确显示
+          lineHeight: "1.6",
+        }}
       >
-        {content}
-      </ReactMarkdown>
-    </div>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
+          rehypePlugins={[rehypeKatex, rehypeRaw]}
+          components={components}
+          skipHtml={false}
+          urlTransform={(url) => {
+            // 安全的URL转换
+            if (url.startsWith("javascript:") || url.startsWith("data:")) {
+              return "#";
+            }
+            return url;
+          }}
+        >
+          {processedContent}
+        </ReactMarkdown>
+      </div>
+    </ErrorBoundary>
   );
 };
 
