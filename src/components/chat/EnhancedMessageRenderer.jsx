@@ -10,15 +10,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import {
-  Copy,
-  Check,
-  Download,
-  Play,
-  ExternalLink,
-  Eye,
-  EyeOff,
-} from "lucide-react";
+import { Copy, Check, Download, ExternalLink, Eye, EyeOff } from "lucide-react";
 import "katex/dist/katex.min.css";
 
 // 代码块组件
@@ -51,8 +43,6 @@ const CodeBlock = ({ children, className, darkMode, ...props }) => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
-  const canRunCode = ["javascript", "html", "css", "python"].includes(language);
 
   return (
     <div
@@ -98,19 +88,6 @@ const CodeBlock = ({ children, className, darkMode, ...props }) => {
           >
             {showRaw ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
-
-          {canRunCode && (
-            <button
-              className={`p-1 rounded transition-colors ${
-                darkMode
-                  ? "hover:bg-gray-700 text-gray-400 hover:text-green-400"
-                  : "hover:bg-gray-200 text-gray-500 hover:text-green-600"
-              }`}
-              title="运行代码"
-            >
-              <Play size={14} />
-            </button>
-          )}
 
           <button
             onClick={handleDownload}
